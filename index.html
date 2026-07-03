@@ -352,12 +352,39 @@ async function fetchPool(){
 }
 
 /* ============================================================
-   HISTORY - reads history.json, a same-origin static file this
-   bot exports (via GitHub's Contents API) whenever Streamlabs
-   Chatbot is closed. Newest play first. Used for both the
-   "Recently Played" panel (first 50) and the searchable
-   "Full History" tab (everything, paginated client-side since
-   it's already all in memory once fetched).
+   RECENTLY PLAYED - reads the sheet's own "LAST PLAYED SONGS"
+   column (B3:B), the same live column the bot has always written
+   on every single play. This is genuinely live, same-cadence as
+   the Current Pool panel - NOT tied to history.json, which only
+   refreshes when Streamlabs Chatbot is closed. Newest first
+   (the bot writes it that way already).
+   Cell label format (see lib/sheets.py historyUpdateThread):
+     "MM-DD-YYYY HH:MM:SS - songname"
+   ============================================================ */
+function parseHistoryLabel(label){
+  const idx = (label || "").indexOf(" - ");
+  if (idx === -1) return { time: "", song: label || "" };
+  return { time: label.slice(0, idx), song: label.slice(idx + 3) };
+}
+
+async function fetchRecent(){
+  const resp = await fetch(gvizUrl("B3:B"));
+  const json = parseGviz(await resp.text());
+  return (json.table.rows || [])
+    .map(r => r.c && r.c[0] ? (r.c[0].f || r.c[0].v || "") : "")
+    .filter(v => v)
+    .map(parseHistoryLabel)
+    .slice(0, 50);
+}
+
+/* ============================================================
+   FULL HISTORY - reads history.json, a same-origin static file
+   this bot exports (via GitHub's Contents API) whenever Streamlabs
+   Chatbot is closed. Newest play first. Only used for the
+   searchable "Full History" tab (everything, rendered client-side
+   since it's already all in memory once fetched) - deliberately
+   NOT used for Recently Played anymore, since this only refreshes
+   once per stream, not live.
    ============================================================ */
 let historyCache = null; // full array, fetched once
 let historyFiltered = [];
@@ -386,10 +413,9 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
-/* ---- Recently Played (first 50 of history.json) ---- */
-function renderRecent(history){
+/* ---- Recently Played (live, from the sheet - see fetchRecent above) ---- */
+function renderRecent(recent){
   const list = document.getElementById("recentList");
-  const recent = history.slice(0, 50);
   document.getElementById("recentCount").textContent = `last ${recent.length}`;
   if (!recent.length){
     list.innerHTML = `<div class="empty">No songs played yet this stream.</div>`;
@@ -482,10 +508,10 @@ async function refresh(){
     statusText.textContent = "Couldn't reach the live sheet — retrying…";
   }
   try {
-    const history = await fetchHistory();
-    renderRecent(history);
+    const recent = await fetchRecent();
+    renderRecent(recent);
   } catch (e) {
-    // history.json not published yet (e.g. brand new setup) - leave panel as-is
+    // sheet temporarily unreachable - leave panel as-is, next refresh will retry
   }
 }
 
