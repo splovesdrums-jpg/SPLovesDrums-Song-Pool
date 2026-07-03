@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Song Pool — Live</title>
+<title>SPLovesDrums Song Pool</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
@@ -41,20 +41,23 @@
   }
   .brand{display:flex;align-items:center;gap:14px;}
   .brand-icon{
-    width:46px;height:46px;border-radius:12px;
+    width:52px;height:52px;border-radius:12px;
     background:linear-gradient(135deg,var(--accent),var(--accent2));
     display:flex;align-items:center;justify-content:center;
-    font-size:22px;
+    font-size:24px;
     box-shadow:0 4px 18px rgba(255,91,61,0.35);
+    overflow:hidden;
+    flex-shrink:0;
   }
+  .brand-icon img{width:100%;height:100%;object-fit:cover;display:block;}
   h1{
     font-family:'Bebas Neue', 'Oswald', sans-serif;
-    letter-spacing:1.5px;
-    font-size:32px;
+    letter-spacing:1px;
+    font-size:26px;
     margin:0;
-    line-height:1;
+    line-height:1.05;
   }
-  .brand small{display:block;color:var(--text-dim);font-size:13px;font-weight:400;letter-spacing:0.5px;margin-top:2px;}
+  .brand small{display:block;color:var(--text-dim);font-size:16px;font-weight:400;letter-spacing:0.4px;margin-top:4px;}
   .status{
     display:flex;align-items:center;gap:8px;
     font-size:13px;color:var(--text-dim);
@@ -183,8 +186,8 @@
   }
   .legend{
     max-width:1180px;margin:16px auto 0;padding:0 32px;
-    display:flex;gap:18px;flex-wrap:wrap;
-    font-size:12px;color:var(--text-dim);
+    display:flex;flex-direction:column;gap:6px;
+    font-size:15px;color:var(--text-dim);
   }
   .legend span{display:inline-flex;align-items:center;gap:6px;}
 
@@ -204,27 +207,20 @@
     font-size:14px;
   }
   .search-bar input:focus{outline:none;border-color:var(--accent);}
-  .load-more{
-    display:block;width:100%;
-    padding:14px;
-    background:var(--card-hi);
-    border:none;border-top:1px solid var(--border);
-    color:var(--accent2);
-    font-family:'Oswald',sans-serif;
-    font-weight:600;letter-spacing:0.4px;font-size:13px;
-    cursor:pointer;
-  }
-  .load-more:hover{background:var(--bg2);}
 </style>
 </head>
 <body>
 
 <header>
   <div class="brand">
-    <div class="brand-icon">🥁</div>
+    <div class="brand-icon">
+      <img src="logo.png" alt="SPLovesDrums logo"
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+      <span style="display:none;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;">🥁</span>
+    </div>
     <div>
-      <h1>SONG POOL</h1>
-      <small>Request a song, get in the queue — !songpool</small>
+      <h1>SPLOVESDRUMS SONG POOL</h1>
+      <small>Request a song in Twitch chat to get in the pool — !songrequest [artist - song]</small>
     </div>
   </div>
   <div class="status"><span class="dot"></span><span id="statusText">Live · updated just now</span></div>
@@ -236,7 +232,8 @@
 </nav>
 
 <div class="legend">
-  <span>🥁 = supported request (sub/bits/donation)</span>
+  <span>💎 Prioritize your song with a sub, donation, bits, or science points</span>
+  <span>🎲 Songs are randomized — only 💎 prioritized songs are played in order</span>
   <span style="color:var(--accent);">▍ highlighted row = now playing</span>
 </div>
 
@@ -247,7 +244,7 @@
       <section class="panel">
         <div class="panel-head">
           <h2>CURRENT POOL</h2>
-          <span class="count" id="poolCount">0 in queue</span>
+          <span class="count" id="poolCount">0 in pool</span>
         </div>
         <div class="list" id="poolList"></div>
       </section>
@@ -272,7 +269,6 @@
         <input type="text" id="searchInput" placeholder="Search by song or artist…" />
       </div>
       <div class="list" id="historyList" style="max-height:640px;"></div>
-      <button class="load-more" id="loadMoreBtn">Load 100 more</button>
     </section>
   </div>
 
@@ -289,7 +285,6 @@
 const SHEET_ID = "1HohO7wzkWeShyETqIoqM9fNLQm_cR9s2YddQtJVddck";
 const HISTORY_JSON_URL = "history.json"; // same-origin file this bot exports to the repo
 const REFRESH_MS = 20000;
-const PAGE_SIZE = 100;
 
 /* ============================================================
    TAB SWITCHING
@@ -331,10 +326,10 @@ function parseGviz(text){
 }
 
 // Pool cell label format written by the bot (see lib/sheets.py getCellContents):
-//   "(CURRENT) 🥁SongName (requester)"   <- promoted + currently playing
-//   "🥁SongName (requester)"              <- promoted
+//   "(CURRENT) 💎SongName (requester)"   <- promoted + currently playing
+//   "💎SongName (requester)"              <- promoted
 //   "SongName (requester)"                <- regular request
-const POOL_CELL_RE = /^(\(CURRENT\)\s*)?(🥁)?(.*)\s\(([^)]+)\)\s*$/;
+const POOL_CELL_RE = /^(\(CURRENT\)\s*)?(💎)?(.*)\s\(([^)]+)\)\s*$/;
 
 function parsePoolLabel(label){
   const m = POOL_CELL_RE.exec(label || "");
@@ -366,7 +361,6 @@ async function fetchPool(){
    ============================================================ */
 let historyCache = null; // full array, fetched once
 let historyFiltered = [];
-let historyShown = 0;
 
 async function fetchHistory(){
   if (historyCache) return historyCache;
@@ -409,7 +403,9 @@ function renderRecent(history){
   `).join("");
 }
 
-/* ---- Full History (search + paginated render) ---- */
+/* ---- Full History (search, renders every matching row at once -
+   with 24k+ entries that's ~1-2 tenths of a second of DOM build time,
+   a one-time cost per tab-open/search, no pagination needed) ---- */
 function ensureHistoryLoaded(){
   fetchHistory().then(history => {
     document.getElementById("historyCount").textContent = `${history.length.toLocaleString()} songs ever played`;
@@ -417,50 +413,42 @@ function ensureHistoryLoaded(){
   }).catch(() => {
     document.getElementById("historyList").innerHTML =
       `<div class="empty">Full history hasn't been published yet — it updates automatically once the stream ends.</div>`;
-    document.getElementById("loadMoreBtn").style.display = "none";
   });
 }
 
 function applyHistoryFilter(){
   const q = document.getElementById("searchInput").value.trim().toLowerCase();
+  const list = document.getElementById("historyList");
   historyFiltered = q
     ? historyCache.filter(h => h.song.toLowerCase().includes(q))
     : historyCache;
-  historyShown = 0;
-  document.getElementById("historyList").innerHTML = "";
-  renderMoreHistory();
-}
 
-function renderMoreHistory(){
-  const list = document.getElementById("historyList");
-  const next = historyFiltered.slice(historyShown, historyShown + PAGE_SIZE);
-  if (historyShown === 0 && next.length === 0){
+  if (!historyFiltered.length){
     list.innerHTML = `<div class="empty">No matches.</div>`;
-    document.getElementById("loadMoreBtn").style.display = "none";
     return;
   }
-  list.insertAdjacentHTML("beforeend", next.map(h => `
+  list.innerHTML = historyFiltered.map(h => `
     <div class="row">
       <div class="history-time">${escapeHtml(formatTime(h.time))}</div>
       <div class="song-info"><div class="song-title">${escapeHtml(h.song)}</div></div>
     </div>
-  `).join(""));
-  historyShown += next.length;
-  document.getElementById("loadMoreBtn").style.display =
-    historyShown < historyFiltered.length ? "block" : "none";
+  `).join("");
 }
 
+// debounced so typing doesn't rebuild potentially thousands of rows on every keystroke
+let searchDebounce = null;
 document.getElementById("searchInput").addEventListener("input", () => {
-  if (historyCache) applyHistoryFilter();
+  if (!historyCache) return;
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(applyHistoryFilter, 200);
 });
-document.getElementById("loadMoreBtn").addEventListener("click", renderMoreHistory);
 
 /* ============================================================
    CURRENT POOL render
    ============================================================ */
 function renderPool(pool){
   const list = document.getElementById("poolList");
-  document.getElementById("poolCount").textContent = `${pool.length} in queue`;
+  document.getElementById("poolCount").textContent = `${pool.length} in pool`;
   if (!pool.length){
     list.innerHTML = `<div class="empty">Pool's empty — be the first to request a song!</div>`;
     return;
@@ -474,7 +462,7 @@ function renderPool(pool){
       </div>
       <div class="badges">
         ${s.current ? '<span class="badge now">NOW PLAYING</span>' : ""}
-        ${s.promoted ? '<span class="badge promo">🥁 PRIORITY</span>' : ""}
+        ${s.promoted ? '<span class="badge promo">💎 PRIORITY</span>' : ""}
       </div>
     </div>
   `).join("");
