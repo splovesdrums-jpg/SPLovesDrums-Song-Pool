@@ -1,3 +1,4 @@
+<!-- PAGE_VERSION: v6-recently-played-live-fix -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -216,14 +217,14 @@
     <div class="brand-icon">
       <img src="logo.png" alt="SPLovesDrums logo"
            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-      <span style="display:none;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;">🥁</span>
+      <span style="display:none;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;">ðŸ¥</span>
     </div>
     <div>
       <h1>SPLOVESDRUMS SONG POOL</h1>
-      <small>Request a song in Twitch chat to get in the pool — !songrequest [artist - song]</small>
+      <small>Request a song in Twitch chat to get in the pool â€” !songrequest [artist - song]</small>
     </div>
   </div>
-  <div class="status"><span class="dot"></span><span id="statusText">Live · updated just now</span></div>
+  <div class="status"><span class="dot"></span><span id="statusText">Live Â· updated just now</span></div>
 </header>
 
 <nav class="tabs">
@@ -232,9 +233,9 @@
 </nav>
 
 <div class="legend">
-  <span>💎 Prioritize your song with a sub, donation, bits, or science points</span>
-  <span>🎲 Songs are randomized — only 💎 prioritized songs are played in order</span>
-  <span style="color:var(--accent);">▍ highlighted row = now playing</span>
+  <span>ðŸ’Ž Prioritize your song with a sub, donation, bits, or science points</span>
+  <span>ðŸŽ² Songs are randomized â€” only ðŸ’Ž prioritized songs are played in order</span>
+  <span style="color:var(--accent);">â– highlighted row = now playing</span>
 </div>
 
 <main>
@@ -266,7 +267,7 @@
         <span class="count" id="historyCount">0 songs ever played</span>
       </div>
       <div class="search-bar">
-        <input type="text" id="searchInput" placeholder="Search by song or artist…" />
+        <input type="text" id="searchInput" placeholder="Search by song or artistâ€¦" />
       </div>
       <div class="list" id="historyList" style="max-height:640px;"></div>
     </section>
@@ -275,7 +276,7 @@
 </main>
 
 <footer>
-  Live pool auto-refreshes every 20s &nbsp;·&nbsp; Full history updates each time the stream ends
+  Live pool auto-refreshes every 20s &nbsp;Â·&nbsp; Full history updates each time the stream ends
 </footer>
 
 <script>
@@ -326,10 +327,10 @@ function parseGviz(text){
 }
 
 // Pool cell label format written by the bot (see lib/sheets.py getCellContents):
-//   "(CURRENT) 💎SongName (requester)"   <- promoted + currently playing
-//   "💎SongName (requester)"              <- promoted
+//   "(CURRENT) ðŸ’ŽSongName (requester)"   <- promoted + currently playing
+//   "ðŸ’ŽSongName (requester)"              <- promoted
 //   "SongName (requester)"                <- regular request
-const POOL_CELL_RE = /^(\(CURRENT\)\s*)?(💎)?(.*)\s\(([^)]+)\)\s*$/;
+const POOL_CELL_RE = /^(\(CURRENT\)\s*)?(ðŸ’Ž)?(.*)\s\(([^)]+)\)\s*$/;
 
 function parsePoolLabel(label){
   const m = POOL_CELL_RE.exec(label || "");
@@ -438,7 +439,7 @@ function ensureHistoryLoaded(){
     applyHistoryFilter();
   }).catch(() => {
     document.getElementById("historyList").innerHTML =
-      `<div class="empty">Full history hasn't been published yet — it updates automatically once the stream ends.</div>`;
+      `<div class="empty">Full history hasn't been published yet â€” it updates automatically once the stream ends.</div>`;
   });
 }
 
@@ -476,7 +477,7 @@ function renderPool(pool){
   const list = document.getElementById("poolList");
   document.getElementById("poolCount").textContent = `${pool.length} in pool`;
   if (!pool.length){
-    list.innerHTML = `<div class="empty">Pool's empty — be the first to request a song!</div>`;
+    list.innerHTML = `<div class="empty">Pool's empty â€” be the first to request a song!</div>`;
     return;
   }
   list.innerHTML = pool.map((s, i) => `
@@ -488,7 +489,7 @@ function renderPool(pool){
       </div>
       <div class="badges">
         ${s.current ? '<span class="badge now">NOW PLAYING</span>' : ""}
-        ${s.promoted ? '<span class="badge promo">💎 PRIORITY</span>' : ""}
+        ${s.promoted ? '<span class="badge promo">ðŸ’Ž PRIORITY</span>' : ""}
       </div>
     </div>
   `).join("");
@@ -503,9 +504,9 @@ async function refresh(){
   try {
     const pool = await fetchPool();
     renderPool(pool);
-    statusText.textContent = "Live · updated " + new Date().toLocaleTimeString();
+    statusText.textContent = "Live Â· updated " + new Date().toLocaleTimeString();
   } catch (e) {
-    statusText.textContent = "Couldn't reach the live sheet — retrying…";
+    statusText.textContent = "Couldn't reach the live sheet â€” retryingâ€¦";
   }
   try {
     const recent = await fetchRecent();
