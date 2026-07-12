@@ -1,4 +1,4 @@
-<!-- PAGE_VERSION: v8-contrast-fix -->
+<!-- PAGE_VERSION: v9-youtube-links -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -160,6 +160,13 @@
     font-weight:500;font-size:14.5px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
+  .song-title a.song-link{
+    color:inherit;text-decoration:none;
+    border-bottom:1px dotted var(--text-dim);
+  }
+  .song-title a.song-link:hover{
+    color:var(--accent2);border-bottom-color:var(--accent2);
+  }
   .song-meta{font-size:12px;color:var(--text-dim);margin-top:2px;}
   .badges{display:flex;gap:6px;flex-shrink:0;}
   .badge{
@@ -287,6 +294,16 @@ const SHEET_ID = "1HohO7wzkWeShyETqIoqM9fNLQm_cR9s2YddQtJVddck";
 const HISTORY_JSON_URL = "history.json"; // same-origin file this bot exports to the repo
 const REFRESH_MS = 20000;
 
+// Restricted to the Google Sheets API only, and to this page's own domain
+// (see Google Cloud Console > Credentials > API restrictions / Application
+// restrictions). Safe to be public client-side, same as a public Maps key.
+// Used only to read the YouTube link out of each pool row's HYPERLINK()
+// formula - the free gviz endpoint below can't see that link, only the
+// display text. If this is ever left blank, or the request fails for any
+// reason (quota, revoked key, etc.), fetchPool() automatically falls back
+// to the old text-only gviz method so the page never breaks.
+const SHEETS_API_KEY = "AIzaSyAaRimkAdOSHyBvqUk-DpC15py_CTcAXMQ";
+
 /* ============================================================
    TAB SWITCHING
    ============================================================ */
@@ -337,22 +354,66 @@ const POOL_CELL_RE = /^(\(CURRENT\)\s*)?(\uD83D\uDC8E)?(.*)\s\(([^)]+)\)\s*$/;
 
 function parsePoolLabel(label){
   const m = POOL_CELL_RE.exec(label || "");
-  if (!m) return { song: label || "", requester: "", promoted: false, current: false };
+  if (!m) return { song: label || "", requester: "", promoted: false, current: false, link: null };
   return {
     current: !!m[1],
     promoted: !!m[2],
     song: (m[3] || "").trim(),
     requester: m[4] || "",
+    link: null,
   };
 }
 
-async function fetchPool(){
+// Text-only fallback: same free gviz endpoint as always. Used automatically
+// whenever the Sheets API (link-aware) fetch below isn't available or fails.
+async function fetchPoolTextOnly(){
   const resp = await fetch(gvizUrl("A3:A"));
   const json = parseGviz(await resp.text());
   return (json.table.rows || [])
     .map(r => r.c && r.c[0] ? (r.c[0].f || r.c[0].v || "") : "")
     .filter(v => v)
     .map(parsePoolLabel);
+}
+
+// Link-aware fetch via the Sheets API v4, using valueRenderOption=FORMULA so
+// each cell comes back as its raw formula string, e.g.:
+//   =hyperlink("https://www.youtube.com/watch?v=XXXX", "(CURRENT) [diamond]Song (requester)")
+// (see lib/sheets.py getCellContents, which writes exactly this formula).
+// The URL is always the first quoted argument and never itself contains a
+// quote character, so it can be pulled out with a simple, safe regex - the
+// display-text second argument is then handed to the same parsePoolLabel()
+// used by the text-only path above.
+const FORMULA_URL_RE = /^=hyperlink\(\s*"([^"]*)"/i;
+const FORMULA_TEXT_RE = /,\s*"([\s\S]*)"\s*\)\s*$/i;
+
+async function fetchPoolWithLinks(){
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/A3:A?valueRenderOption=FORMULA&key=${SHEETS_API_KEY}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error("Sheets API request failed: " + resp.status);
+  const json = await resp.json();
+  const rows = json.values || [];
+  return rows
+    .map(r => (r && r[0]) || "")
+    .filter(v => v)
+    .map(formula => {
+      const urlMatch = FORMULA_URL_RE.exec(formula);
+      const textMatch = FORMULA_TEXT_RE.exec(formula);
+      const label = textMatch ? textMatch[1] : formula;
+      const parsed = parsePoolLabel(label);
+      parsed.link = urlMatch ? urlMatch[1] : null;
+      return parsed;
+    });
+}
+
+async function fetchPool(){
+  if (SHEETS_API_KEY){
+    try {
+      return await fetchPoolWithLinks();
+    } catch (e) {
+      console.warn("Link-aware pool fetch failed, falling back to text-only pool:", e);
+    }
+  }
+  return await fetchPoolTextOnly();
 }
 
 /* ============================================================
@@ -487,7 +548,9 @@ function renderPool(pool){
     <div class="row ${s.current ? "current" : ""}">
       <div class="rank">${i + 1}</div>
       <div class="song-info">
-        <div class="song-title">${escapeHtml(s.song)}</div>
+        <div class="song-title">${s.link
+          ? `<a class="song-link" href="${escapeHtml(s.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.song)}</a>`
+          : escapeHtml(s.song)}</div>
         <div class="song-meta">requested by ${escapeHtml(s.requester)}</div>
       </div>
       <div class="badges">
