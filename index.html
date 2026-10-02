@@ -1,4 +1,4 @@
-<!-- PAGE_VERSION: v9-youtube-links -->
+<!-- PAGE_VERSION: v10-paginated-history -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -201,11 +201,13 @@
 
   .search-bar{
     display:flex;align-items:center;gap:10px;
+    flex-wrap:wrap;
     padding:16px 20px;
     border-bottom:1px solid var(--border);
   }
   .search-bar input{
     flex:1;
+    min-width:0;
     background:var(--bg2);
     border:1px solid var(--border);
     color:var(--text);
@@ -215,6 +217,31 @@
     font-size:14px;
   }
   .search-bar input:focus{outline:none;border-color:var(--accent);}
+  .search-hint{width:100%;margin:0;color:var(--text-dim);font-size:12px;}
+  .history-tools,.history-pagination{
+    display:flex;align-items:center;justify-content:space-between;
+    flex-wrap:wrap;gap:10px;padding:12px 20px;
+    border-bottom:1px solid var(--border);
+  }
+  .history-status{flex:1;min-width:160px;margin:0;color:var(--text-dim);font-size:13px;}
+  .history-status.error{color:var(--accent);}
+  .history-summary{margin:0;padding:10px 20px;color:var(--text-dim);font-size:13px;}
+  .history-pagination{justify-content:center;border-top:1px solid var(--border);border-bottom:0;}
+  .history-pagination[hidden]{display:none;}
+  .history-page-picker{display:flex;align-items:center;gap:8px;}
+  .history-page-picker input{
+    width:72px;padding:8px;border:1px solid var(--border);border-radius:6px;
+    background:var(--bg2);color:var(--text);font:inherit;
+  }
+  .history-button{
+    padding:8px 12px;border:1px solid var(--border);border-radius:8px;
+    background:var(--bg2);color:var(--text);font:inherit;cursor:pointer;
+  }
+  .history-button:hover:not(:disabled){background:var(--card-hi);}
+  .history-button:disabled{opacity:0.45;cursor:default;}
+  .history-button:focus-visible,.history-page-picker input:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px;
+  }
 </style>
 </head>
 <body>
@@ -271,19 +298,38 @@
     <section class="panel">
       <div class="panel-head">
         <h2>FULL HISTORY</h2>
-        <span class="count" id="historyCount">0 songs ever played</span>
+        <span class="count" id="historyCount">Not loaded</span>
       </div>
       <div class="search-bar">
-        <input type="text" id="searchInput" placeholder="Search by song or artist&hellip;" />
+        <input type="search" id="searchInput" aria-label="Search history by song or artist"
+               aria-describedby="historySearchHint" placeholder="Search by song or artist&hellip;" />
+        <p class="search-hint" id="historySearchHint">Search all recorded plays. Each word must match, in any order; partial words work too.</p>
       </div>
-      <div class="list" id="historyList" style="max-height:640px;"></div>
+      <div class="history-tools">
+        <p class="history-status" id="historyStatus" role="status"></p>
+        <button class="history-button" id="refreshHistoryBtn" type="button">Refresh history</button>
+      </div>
+      <p class="history-summary" id="historySummary" role="status"></p>
+      <div class="list" id="historyList" style="max-height:640px;"
+           tabindex="0" role="region" aria-label="History results" aria-busy="false"></div>
+      <form class="history-pagination" id="historyPagination" aria-label="History pages" hidden>
+        <button class="history-button" id="historyPrevBtn" type="button" aria-controls="historyList">Previous</button>
+        <div class="history-page-picker">
+          <label for="historyPageInput">Page</label>
+          <input id="historyPageInput" type="number" min="1" step="1" value="1" required
+                 aria-describedby="historyPageCount" aria-controls="historyList" />
+          <span id="historyPageCount"></span>
+          <button class="history-button" type="submit" aria-controls="historyList">Go</button>
+        </div>
+        <button class="history-button" id="historyNextBtn" type="button" aria-controls="historyList">Next</button>
+      </form>
     </section>
   </div>
 
 </main>
 
 <footer>
-  Live pool auto-refreshes every 20s &nbsp;&middot;&nbsp; Full history updates each time the stream ends
+  Live pool auto-refreshes every 20s &nbsp;&middot;&nbsp; Full history updates each time the stream ends &nbsp;&middot;&nbsp; Use Refresh history to load updates
 </footer>
 
 <script>
@@ -292,6 +338,7 @@
    ============================================================ */
 const SHEET_ID = "1HohO7wzkWeShyETqIoqM9fNLQm_cR9s2YddQtJVddck";
 const HISTORY_JSON_URL = "history.json"; // same-origin file this bot exports to the repo
+const HISTORY_PAGE_SIZE = 100;
 const REFRESH_MS = 20000;
 
 // Restricted to the Google Sheets API only, and to this page's own domain
@@ -445,21 +492,29 @@ async function fetchRecent(){
 /* ============================================================
    FULL HISTORY - reads history.json, a same-origin static file
    this bot exports (via GitHub's Contents API) whenever Streamlabs
-   Chatbot is closed. Newest play first. Only used for the
-   searchable "Full History" tab (everything, rendered client-side
-   since it's already all in memory once fetched) - deliberately
-   NOT used for Recently Played anymore, since this only refreshes
-   once per stream, not live.
+   Chatbot is closed. Newest play first.
+   The full snapshot is loaded lazily and searched in memory;
+   only the selected page is rendered. Refresh is explicit so
+   new plays do not shift the page while someone is browsing.
+   Recently Played continues to use the live sheet independently.
    ============================================================ */
-let historyCache = null; // full array, fetched once
+let historyCache = null;
+let historySearchText = [];
 let historyFiltered = [];
+let historyPage = 1;
+let historyLoadPromise = null;
+let searchDebounce = null;
 
 async function fetchHistory(){
-  if (historyCache) return historyCache;
-  const resp = await fetch(HISTORY_JSON_URL, { cache: "no-store" });
-  if (!resp.ok) throw new Error("history.json not available yet");
-  historyCache = await resp.json();
-  return historyCache;
+  const resp = await fetch(HISTORY_JSON_URL, { cache: "no-cache" });
+  if (!resp.ok) throw new Error("History request failed: " + resp.status);
+  const history = await resp.json();
+  if (!Array.isArray(history) || history.some(h =>
+    !h || typeof h.song !== "string" || typeof h.time !== "string"
+  )){
+    throw new Error("Invalid history data: expected an array of song and time strings");
+  }
+  return history;
 }
 
 function formatTime(t){
@@ -494,31 +549,87 @@ function renderRecent(recent){
   `).join("");
 }
 
-/* ---- Full History (search, renders every matching row at once -
-   with 24k+ entries that's ~1-2 tenths of a second of DOM build time,
-   a one-time cost per tab-open/search, no pagination needed) ---- */
-function ensureHistoryLoaded(){
-  fetchHistory().then(history => {
-    document.getElementById("historyCount").textContent = `${history.length.toLocaleString()} songs ever played`;
-    applyHistoryFilter();
-  }).catch(() => {
-    document.getElementById("historyList").innerHTML =
-      `<div class="empty">Full history hasn't been published yet \u{2014} it updates automatically once the stream ends.</div>`;
-  });
+/* ---- Full History: one validated snapshot, bounded rendering ---- */
+function ensureHistoryLoaded(force = false){
+  if (historyLoadPromise) return historyLoadPromise;
+  if (historyCache !== null && !force) return Promise.resolve();
+
+  const list = document.getElementById("historyList");
+  const status = document.getElementById("historyStatus");
+  const button = document.getElementById("refreshHistoryBtn");
+  const refreshing = historyCache !== null;
+  status.classList.remove("error");
+  status.textContent = refreshing ? "Checking for newly published plays..." : "Loading history...";
+  button.disabled = true;
+  button.textContent = refreshing ? "Refreshing..." : "Loading...";
+  list.setAttribute("aria-busy", "true");
+  if (!refreshing) list.innerHTML = `<div class="empty">Loading history...</div>`;
+
+  historyLoadPromise = (async () => {
+    try {
+      const history = await fetchHistory();
+      const searchText = history.map(h => h.song.toLowerCase());
+      historyCache = history;
+      historySearchText = searchText;
+      document.getElementById("historyCount").textContent = `${history.length.toLocaleString()} recorded plays`;
+      applyHistoryFilter();
+      status.textContent = "History loaded. Use Refresh history to check for updates.";
+    } catch (error) {
+      console.error("Unable to load full history:", error);
+      status.classList.add("error");
+      status.textContent = refreshing
+        ? "Couldn't refresh history. Still showing the previously loaded snapshot. Select Refresh history to retry."
+        : "Couldn't load history. Check your connection and select Retry.";
+      if (!refreshing) list.innerHTML = `<div class="empty">History could not be loaded.</div>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = historyCache === null ? "Retry" : "Refresh history";
+      list.setAttribute("aria-busy", "false");
+      historyLoadPromise = null;
+    }
+  })();
+  return historyLoadPromise;
 }
 
 function applyHistoryFilter(){
+  clearTimeout(searchDebounce);
   const q = document.getElementById("searchInput").value.trim().toLowerCase();
-  const list = document.getElementById("historyList");
-  historyFiltered = q
-    ? historyCache.filter(h => h.song.toLowerCase().includes(q))
+  const terms = q ? q.split(/\s+/) : [];
+  historyFiltered = terms.length
+    ? historyCache.filter((h, i) => terms.every(term => historySearchText[i].includes(term)))
     : historyCache;
+  historyPage = 1;
+  renderHistoryPage();
+}
 
-  if (!historyFiltered.length){
-    list.innerHTML = `<div class="empty">No matches.</div>`;
+function renderHistoryPage(){
+  const list = document.getElementById("historyList");
+  const matches = historyFiltered.length;
+  const pageCount = Math.max(1, Math.ceil(matches / HISTORY_PAGE_SIZE));
+  historyPage = Math.max(1, Math.min(historyPage, pageCount));
+  const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+  const end = Math.min(start + HISTORY_PAGE_SIZE, matches);
+  const summary = document.getElementById("historySummary");
+  const filtered = document.getElementById("searchInput").value.trim() !== "";
+  summary.textContent = matches
+    ? `Showing ${(start + 1).toLocaleString()}\u2013${end.toLocaleString()} of ${matches.toLocaleString()} ${filtered ? "matching " : ""}plays`
+    : `0 ${filtered ? "matching " : ""}plays`;
+  document.getElementById("historyPagination").hidden = matches === 0;
+  document.getElementById("historyPrevBtn").disabled = historyPage === 1;
+  document.getElementById("historyNextBtn").disabled = historyPage === pageCount;
+  const pageInput = document.getElementById("historyPageInput");
+  pageInput.value = historyPage;
+  pageInput.max = pageCount;
+  document.getElementById("historyPageCount").textContent = `of ${pageCount.toLocaleString()}`;
+  list.scrollTop = 0;
+
+  if (!matches){
+    list.innerHTML = historyCache.length
+      ? `<div class="empty">No matches.</div>`
+      : `<div class="empty">No recorded plays in this history.</div>`;
     return;
   }
-  list.innerHTML = historyFiltered.map(h => `
+  list.innerHTML = historyFiltered.slice(start, end).map(h => `
     <div class="row">
       <div class="history-time">${escapeHtml(formatTime(h.time))}</div>
       <div class="song-info"><div class="song-title">${escapeHtml(h.song)}</div></div>
@@ -526,12 +637,25 @@ function applyHistoryFilter(){
   `).join("");
 }
 
-// debounced so typing doesn't rebuild potentially thousands of rows on every keystroke
-let searchDebounce = null;
 document.getElementById("searchInput").addEventListener("input", () => {
-  if (!historyCache) return;
+  if (historyCache === null) return;
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(applyHistoryFilter, 200);
+});
+document.getElementById("refreshHistoryBtn").addEventListener("click", () => ensureHistoryLoaded(true));
+document.getElementById("historyPrevBtn").addEventListener("click", () => {
+  historyPage--;
+  renderHistoryPage();
+});
+document.getElementById("historyNextBtn").addEventListener("click", () => {
+  historyPage++;
+  renderHistoryPage();
+});
+document.getElementById("historyPagination").addEventListener("submit", event => {
+  event.preventDefault();
+  if (!event.currentTarget.reportValidity()) return;
+  historyPage = Number(document.getElementById("historyPageInput").value);
+  renderHistoryPage();
 });
 
 /* ============================================================
@@ -563,7 +687,7 @@ function renderPool(pool){
 
 /* ============================================================
    MAIN REFRESH LOOP (live pool + recently-played panel only;
-   full history is fetched once, lazily, when that tab is opened)
+   full history loads lazily and refreshes only on request)
    ============================================================ */
 async function refresh(){
   const statusText = document.getElementById("statusText");
